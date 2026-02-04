@@ -64,7 +64,6 @@ export const useGameLogic = () => {
 
   // Check level up
   useEffect(() => {
-    const currentLevel = LEVELS.find((l) => l.level === gameState.level);
     const nextLevel = LEVELS.find((l) => l.level === gameState.level + 1);
 
     if (nextLevel && gameState.score >= nextLevel.requiredScore) {
