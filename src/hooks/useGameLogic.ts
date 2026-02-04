@@ -1,0 +1,425 @@
+import { useState, useCallback, useEffect } from 'react';
+import { INITIAL_STATE } from '../types/game';
+import type { GameState, Purchase } from '../types/game';
+import { NEEDS, WANTS } from '../data/purchases';
+import { LEVELS, ACHIEVEMENTS, generateMonthlyChallenge } from '../types/progression';
+import type { Achievement } from '../types/progression';
+import { trackPurchase, trackSkip, trackSave, finalizeMonthAnalytics } from '../utils/analytics';
+import { generateFinancialReport } from '../utils/reportGenerator';
+import type { FinancialReport } from '../types/analytics';
+
+const STORAGE_KEY = 'budget-balance-save';
+
+export const useGameLogic = () => {
+  const [gameState, setGameState] = useState<GameState>(() => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      // Migrate old saves
+      return {
+        ...INITIAL_STATE,
+        ...parsed,
+        achievements: parsed.achievements || [],
+        currentChallenge: parsed.currentChallenge || generateMonthlyChallenge(parsed.month || 1),
+        completedChallenges: parsed.completedChallenges || 0,
+        level: parsed.level || 1,
+      };
+    }
+    return {
+      ...INITIAL_STATE,
+      currentChallenge: generateMonthlyChallenge(1),
+    };
+  });
+
+  const [currentPurchases, setCurrentPurchases] = useState<Purchase[]>([]);
+  const [monthExpenses, setMonthExpenses] = useState(0);
+  const [monthSavings, setMonthSavings] = useState(0);
+  const [boughtWants, setBoughtWants] = useState(0);
+  const [notification, setNotification] = useState<string | null>(null);
+  const [levelUpNotification, setLevelUpNotification] = useState<string | null>(null);
+  const [achievementUnlocked, setAchievementUnlocked] = useState<Achievement | null>(null);
+  const [currentReport, setCurrentReport] = useState<FinancialReport | null>(null);
+
+  // Save to localStorage whenever state changes
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(gameState));
+  }, [gameState]);
+
+  // Initialize month
+  useEffect(() => {
+    const allPurchases = [...NEEDS, ...WANTS].sort(() => Math.random() - 0.5);
+    setCurrentPurchases(allPurchases);
+    setMonthExpenses(0);
+    setMonthSavings(0);
+    setBoughtWants(0);
+
+    // Generate new challenge if needed
+    if (!gameState.currentChallenge) {
+      setGameState((prev) => ({
+        ...prev,
+        currentChallenge: generateMonthlyChallenge(prev.month),
+      }));
+    }
+  }, [gameState.month]);
+
+  // Check level up
+  useEffect(() => {
+    const currentLevel = LEVELS.find((l) => l.level === gameState.level);
+    const nextLevel = LEVELS.find((l) => l.level === gameState.level + 1);
+
+    if (nextLevel && gameState.score >= nextLevel.requiredScore) {
+      setGameState((prev) => ({ ...prev, level: nextLevel.level }));
+      setLevelUpNotification(`🎉 Level Up! ${nextLevel.name}`);
+      setTimeout(() => setLevelUpNotification(null), 3000);
+    }
+  }, [gameState.score, gameState.level]);
+
+  const showNotification = useCallback((message: string) => {
+    setNotification(message);
+    setTimeout(() => setNotification(null), 2000);
+  }, []);
+
+  const checkAchievements = useCallback((updatedState: GameState) => {
+    const achievements = ACHIEVEMENTS.map((ach) => {
+      if (gameState.achievements.includes(ach.id)) {
+        return { ...ach, unlocked: true };
+      }
+
+      let progress = 0;
+      let unlocked = false;
+
+      switch (ach.id) {
+        case 'first-save':
+          progress = updatedState.savings > 0 ? 1 : 0;
+          unlocked = progress >= ach.maxProgress;
+          break;
+        case 'save-10k':
+          progress = Math.min(updatedState.savings, 10000);
+          unlocked = updatedState.savings >= 10000;
+          break;
+        case 'save-30k':
+          progress = Math.min(updatedState.savings, 30000);
+          unlocked = updatedState.savings >= 30000;
+          break;
+        case 'month-5':
+          progress = Math.min(updatedState.month, 5);
+          unlocked = updatedState.month >= 5;
+          break;
+        case 'month-10':
+          progress = Math.min(updatedState.month, 10);
+          unlocked = updatedState.month >= 10;
+          break;
+      }
+
+      if (unlocked && !gameState.achievements.includes(ach.id)) {
+        setAchievementUnlocked(ach);
+        setTimeout(() => setAchievementUnlocked(null), 4000);
+        return { ...ach, unlocked: true, progress };
+      }
+
+      return { ...ach, progress, unlocked };
+    });
+
+    const unlockedIds = achievements.filter((a) => a.unlocked).map((a) => a.id);
+    if (unlockedIds.length > gameState.achievements.length) {
+      setGameState((prev) => ({ ...prev, achievements: unlockedIds }));
+    }
+  }, [gameState.achievements]);
+
+  const buyItem = useCallback(
+    (purchase: Purchase) => {
+      if (gameState.balance < purchase.cost) {
+        showNotification('Not enough money!');
+        return false;
+      }
+
+      const balanceBefore = gameState.balance;
+      const balanceAfter = balanceBefore - purchase.cost;
+
+      // Track the decision
+      const decision = trackPurchase(purchase, gameState.month, balanceBefore, balanceAfter);
+
+      setGameState((prev) => {
+        const newState = {
+          ...prev,
+          balance: balanceAfter,
+          score: prev.score + purchase.impact,
+          decisions: [...prev.decisions, decision],
+        };
+        checkAchievements(newState);
+        return newState;
+      });
+
+      setMonthExpenses((prev) => prev + purchase.cost);
+
+      if (purchase.category === 'want') {
+        setBoughtWants((prev) => prev + 1);
+      }
+
+      setCurrentPurchases((prev) => prev.filter((p) => p.id !== purchase.id));
+
+      if (purchase.category === 'need') {
+        showNotification('✅ Good choice!');
+      } else {
+        showNotification('💸 Expensive choice!');
+      }
+
+      return true;
+    },
+    [gameState.balance, gameState.month, gameState.decisions, showNotification, checkAchievements]
+  );
+
+  const skipItem = useCallback((purchaseId: string) => {
+    const purchase = currentPurchases.find((p) => p.id === purchaseId);
+    if (purchase) {
+      const decision = trackSkip(purchase, gameState.month, gameState.balance);
+      setGameState((prev) => ({
+        ...prev,
+        decisions: [...prev.decisions, decision],
+      }));
+    }
+    setCurrentPurchases((prev) => prev.filter((p) => p.id !== purchaseId));
+  }, [currentPurchases, gameState.month, gameState.balance, gameState.decisions]);
+
+  const saveToSavings = useCallback(
+    (amount: number) => {
+      if (gameState.balance < amount) {
+        showNotification('Not enough money!');
+        return false;
+      }
+
+      // Calculate interest based on level
+      const currentLevelData = LEVELS.find((l) => l.level === gameState.level);
+      let interestBonus = 0;
+      if (currentLevelData) {
+        if (gameState.level >= 5) interestBonus = 0.3;
+        else if (gameState.level >= 4) interestBonus = 0.2;
+        else if (gameState.level >= 2) interestBonus = 0.1;
+      }
+
+      const bonusAmount = Math.floor(amount * interestBonus);
+      const balanceBefore = gameState.balance;
+      const balanceAfter = balanceBefore - amount;
+      const impact = Math.floor(amount / 100) + bonusAmount;
+
+      // Track the decision
+      const decision = trackSave(amount, gameState.month, balanceBefore, balanceAfter, impact);
+
+      setGameState((prev) => {
+        const newState = {
+          ...prev,
+          balance: balanceAfter,
+          savings: prev.savings + amount + bonusAmount,
+          score: prev.score + impact,
+          decisions: [...prev.decisions, decision],
+        };
+        checkAchievements(newState);
+        return newState;
+      });
+
+      setMonthSavings((prev) => prev + amount);
+
+      if (bonusAmount > 0) {
+        showNotification(`💰 Saved ₪${amount} + ₪${bonusAmount} bonus!`);
+      } else {
+        showNotification(`💰 Saved ₪${amount}!`);
+      }
+      return true;
+    },
+    [gameState.balance, gameState.level, gameState.month, gameState.decisions, showNotification, checkAchievements]
+  );
+
+  const endMonth = useCallback(() => {
+    const income = gameState.monthlyIncome;
+    const expenses = monthExpenses;
+    const balance = gameState.balance;
+
+    // Check unpaid essential bills
+    const unpaidNeeds = currentPurchases.filter((p) => p.category === 'need');
+    let penalty = 0;
+    if (unpaidNeeds.length > 0) {
+      penalty = 1000;
+      showNotification('⚠️ Unpaid essential bills! -₪1000');
+    }
+
+    // Calculate bonuses
+    let bonus = 0;
+    let bonusMessage = '';
+
+    // Level bonuses
+    const currentLevelData = LEVELS.find((l) => l.level === gameState.level);
+    if (currentLevelData) {
+      if (gameState.level >= 5) {
+        bonus += 1000;
+        bonusMessage += ' +₪1000 (Guru bonus)';
+      } else if (gameState.level >= 3) {
+        bonus += 500;
+        bonusMessage += ' +₪500 (Master bonus)';
+      }
+    }
+
+    // Frugal bonus
+    if (expenses < income * 0.5) {
+      bonus += 500;
+      bonusMessage += ' +₪500 (Frugal)';
+      // Check frugal achievement
+      if (!gameState.achievements.includes('frugal')) {
+        const ach = ACHIEVEMENTS.find((a) => a.id === 'frugal');
+        if (ach) {
+          setAchievementUnlocked(ach);
+          setTimeout(() => setAchievementUnlocked(null), 4000);
+        }
+      }
+    }
+
+    // Perfect month achievement
+    if (unpaidNeeds.length === 0 && monthSavings >= 2000) {
+      if (!gameState.achievements.includes('perfect-month')) {
+        const ach = ACHIEVEMENTS.find((a) => a.id === 'perfect-month');
+        if (ach) {
+          setAchievementUnlocked(ach);
+          setTimeout(() => setAchievementUnlocked(null), 4000);
+        }
+      }
+    }
+
+    // No wants achievement
+    if (boughtWants === 0) {
+      if (!gameState.achievements.includes('no-wants')) {
+        const ach = ACHIEVEMENTS.find((a) => a.id === 'no-wants');
+        if (ach) {
+          setAchievementUnlocked(ach);
+          setTimeout(() => setAchievementUnlocked(null), 4000);
+        }
+      }
+    }
+
+    // Check challenge completion
+    let challengeBonus = 0;
+    let completedChallenge = false;
+    if (gameState.currentChallenge) {
+      const challenge = gameState.currentChallenge;
+      let completed = false;
+
+      switch (challenge.type) {
+        case 'save':
+          completed = monthSavings >= challenge.target;
+          break;
+        case 'spend':
+          completed = expenses <= challenge.target;
+          break;
+        case 'balance':
+          completed = balance >= challenge.target;
+          break;
+      }
+
+      if (completed) {
+        challengeBonus = challenge.reward;
+        bonusMessage += ` +₪${challengeBonus} (Challenge)`;
+        completedChallenge = true;
+      }
+    }
+
+    if (bonusMessage) {
+      showNotification(`🎁 Bonuses:${bonusMessage}`);
+    }
+
+    // Finalize month analytics
+    const monthlyAnalytics = finalizeMonthAnalytics(
+      gameState.month,
+      income,
+      expenses,
+      monthSavings,
+      unpaidNeeds.length,
+      boughtWants,
+      gameState.score,
+      gameState.level,
+      completedChallenge
+    );
+
+    // Generate financial report
+    const previousMonth = gameState.monthlyAnalytics.length > 0
+      ? gameState.monthlyAnalytics[gameState.monthlyAnalytics.length - 1]
+      : null;
+    const report = generateFinancialReport(monthlyAnalytics, previousMonth, gameState.monthlyAnalytics);
+    setCurrentReport(report);
+
+    // Add to history
+    const newHistory = [
+      ...gameState.history,
+      {
+        month: gameState.month,
+        income,
+        expenses,
+        savings: gameState.savings,
+        balance,
+      },
+    ];
+
+    // New month
+    const newMonth = gameState.month + 1;
+    setGameState((prev) => {
+      const newState = {
+        ...prev,
+        month: newMonth,
+        balance: prev.balance + income + bonus + challengeBonus - penalty,
+        history: newHistory,
+        score: prev.score + bonus / 10,
+        currentChallenge: generateMonthlyChallenge(newMonth),
+        completedChallenges: completedChallenge ? prev.completedChallenges + 1 : prev.completedChallenges,
+        monthlyAnalytics: [...prev.monthlyAnalytics, monthlyAnalytics],
+      };
+      checkAchievements(newState);
+      return newState;
+    });
+
+    setMonthExpenses(0);
+    setMonthSavings(0);
+    setBoughtWants(0);
+  }, [gameState, monthExpenses, monthSavings, boughtWants, currentPurchases, showNotification, checkAchievements]);
+
+  const resetGame = useCallback(() => {
+    setGameState({
+      ...INITIAL_STATE,
+      currentChallenge: generateMonthlyChallenge(1),
+    });
+    localStorage.removeItem(STORAGE_KEY);
+  }, []);
+
+  const isGameOver = gameState.balance < 0;
+  const isGameWon = gameState.savings >= gameState.financialGoal;
+
+  const currentLevel = LEVELS.find((l) => l.level === gameState.level);
+  const nextLevel = LEVELS.find((l) => l.level === gameState.level + 1);
+
+  const allAchievements = ACHIEVEMENTS.map((ach) => ({
+    ...ach,
+    unlocked: gameState.achievements.includes(ach.id),
+  }));
+
+  const closeReport = useCallback(() => {
+    setCurrentReport(null);
+  }, []);
+
+  return {
+    gameState,
+    currentPurchases,
+    monthExpenses,
+    monthSavings,
+    notification,
+    levelUpNotification,
+    achievementUnlocked,
+    currentLevel,
+    nextLevel,
+    allAchievements,
+    currentReport,
+    buyItem,
+    skipItem,
+    saveToSavings,
+    endMonth,
+    resetGame,
+    closeReport,
+    isGameOver,
+    isGameWon,
+  };
+};
