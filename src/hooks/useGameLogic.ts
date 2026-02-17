@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { INITIAL_STATE } from '../types/game';
 import type { GameState, Purchase } from '../types/game';
 import { NEEDS, WANTS } from '../data/purchases';
@@ -14,16 +14,21 @@ export const useGameLogic = () => {
   const [gameState, setGameState] = useState<GameState>(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
-      const parsed = JSON.parse(saved);
-      // Migrate old saves
-      return {
-        ...INITIAL_STATE,
-        ...parsed,
-        achievements: parsed.achievements || [],
-        currentChallenge: parsed.currentChallenge || generateMonthlyChallenge(parsed.month || 1),
-        completedChallenges: parsed.completedChallenges || 0,
-        level: parsed.level || 1,
-      };
+      try {
+        const parsed = JSON.parse(saved);
+        // Migrate old saves
+        return {
+          ...INITIAL_STATE,
+          ...parsed,
+          achievements: parsed.achievements || [],
+          currentChallenge: parsed.currentChallenge || generateMonthlyChallenge(parsed.month || 1),
+          completedChallenges: parsed.completedChallenges || 0,
+          level: parsed.level || 1,
+        };
+      } catch {
+        console.error('Failed to parse saved game, resetting to initial state');
+        localStorage.removeItem(STORAGE_KEY);
+      }
     }
     return {
       ...INITIAL_STATE,
@@ -42,7 +47,11 @@ export const useGameLogic = () => {
 
   // Save to localStorage whenever state changes
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(gameState));
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(gameState));
+    } catch {
+      console.error('Failed to save game state to localStorage');
+    }
   }, [gameState]);
 
   // Initialize month
@@ -391,10 +400,10 @@ export const useGameLogic = () => {
   const currentLevel = LEVELS.find((l) => l.level === gameState.level);
   const nextLevel = LEVELS.find((l) => l.level === gameState.level + 1);
 
-  const allAchievements = ACHIEVEMENTS.map((ach) => ({
+  const allAchievements = useMemo(() => ACHIEVEMENTS.map((ach) => ({
     ...ach,
     unlocked: gameState.achievements.includes(ach.id),
-  }));
+  })), [gameState.achievements]);
 
   const closeReport = useCallback(() => {
     setCurrentReport(null);

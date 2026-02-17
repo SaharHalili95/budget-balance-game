@@ -1,3 +1,6 @@
+import type { Challenge } from './progression';
+import type { DecisionRecord, MonthlyAnalytics } from './analytics';
+
 export interface GameState {
   month: number;
   balance: number;
@@ -9,11 +12,11 @@ export interface GameState {
   financialGoal: number;
   events: GameEvent[];
   history: MonthHistory[];
-  achievements: string[]; // unlocked achievement IDs
-  currentChallenge: any | null;
+  achievements: string[];
+  currentChallenge: Challenge | null;
   completedChallenges: number;
-  decisions: any[]; // Decision tracking
-  monthlyAnalytics: any[]; // Monthly analytics reports
+  decisions: DecisionRecord[];
+  monthlyAnalytics: MonthlyAnalytics[];
 }
 
 export interface MonthHistory {

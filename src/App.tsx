@@ -46,7 +46,7 @@ function App() {
     return (
       <div className={`app ${isRTL ? 'rtl' : ''}`}>
         <div className="start-screen">
-          <div className="logo">💰</div>
+          <div className="logo" role="img" aria-label="Money bag">💰</div>
           <h1>{t.title}</h1>
           <p className="subtitle">{t.subtitle}</p>
 
@@ -77,7 +77,7 @@ function App() {
     return (
       <div className={`app ${isRTL ? 'rtl' : ''}`}>
         <div className="game-over-screen">
-          <div className="logo">{isGameWon ? '🏆' : '😢'}</div>
+          <div className="logo" role="img" aria-label={isGameWon ? 'Trophy' : 'Game over'}>{isGameWon ? '🏆' : '😢'}</div>
           <h1>{isGameWon ? t.youWin : t.gameOver}</h1>
           <div className="final-stats">
             <div className="stat-item">
@@ -118,10 +118,12 @@ function App() {
   const needsPurchases = currentPurchases.filter((p) => p.category === 'need');
   const wantsPurchases = currentPurchases.filter((p) => p.category === 'want');
   const progress = (gameState.savings / gameState.financialGoal) * 100;
-  const levelProgress = nextLevel
-    ? ((gameState.score - (currentLevel?.requiredScore || 0)) /
-        (nextLevel.requiredScore - (currentLevel?.requiredScore || 0))) *
-      100
+  const levelProgressDenom = nextLevel
+    ? nextLevel.requiredScore - (currentLevel?.requiredScore || 0)
+    : 1;
+  const levelProgress = nextLevel && levelProgressDenom > 0
+    ? Math.max(0, Math.min(100,
+        ((gameState.score - (currentLevel?.requiredScore || 0)) / levelProgressDenom) * 100))
     : 100;
 
   return (
@@ -156,7 +158,7 @@ function App() {
           <div className="restart-confirm-modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>⚠️ {t.confirmRestart}</h2>
-              <button className="close-btn" onClick={() => setShowRestartConfirm(false)}>
+              <button className="close-btn" aria-label="Close" onClick={() => setShowRestartConfirm(false)}>
                 ×
               </button>
             </div>
@@ -241,7 +243,7 @@ function App() {
           <div className="achievements-modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>🏆 Achievements</h2>
-              <button className="close-btn" onClick={() => setShowAchievements(false)}>
+              <button className="close-btn" aria-label="Close" onClick={() => setShowAchievements(false)}>
                 ×
               </button>
             </div>
@@ -341,6 +343,7 @@ function App() {
               className="btn-secondary btn-full"
               onClick={() => saveToSavings(1000)}
               disabled={gameState.balance < 1000}
+              title={gameState.balance < 1000 ? `Need ₪1,000 to save (current: ₪${gameState.balance.toLocaleString()})` : ''}
             >
               {t.save} ₪1000
             </button>

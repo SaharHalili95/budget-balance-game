@@ -898,6 +898,16 @@ button:disabled {
 }
 
 /* Responsive */
+@media (max-width: 1024px) {
+  .header-stats {
+    gap: 1rem;
+  }
+
+  .stat strong {
+    font-size: 1.1rem;
+  }
+}
+
 @media (max-width: 968px) {
   .game-content {
     grid-template-columns: 1fr;
@@ -939,5 +949,15 @@ button:disabled {
   .header-stats {
     width: 100%;
     justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .stat {
+    min-width: 60px;
+  }
+
+  .stat strong {
+    font-size: 0.9rem;
   }
 }
