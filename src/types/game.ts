@@ -1,5 +1,6 @@
 import type { Challenge } from './progression';
 import type { DecisionRecord, MonthlyAnalytics } from './analytics';
+import type { PlayerInvestment } from './investments';
 
 export interface GameState {
   month: number;
@@ -17,6 +18,7 @@ export interface GameState {
   completedChallenges: number;
   decisions: DecisionRecord[];
   monthlyAnalytics: MonthlyAnalytics[];
+  investments: PlayerInvestment[];
 }
 
 export interface MonthHistory {
@@ -74,6 +76,7 @@ export const INITIAL_STATE: GameState = {
   completedChallenges: 0,
   decisions: [],
   monthlyAnalytics: [],
+  investments: [],
 };
 
 export const CATEGORIES = {

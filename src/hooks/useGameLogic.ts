@@ -1,12 +1,14 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
 import { INITIAL_STATE } from '../types/game';
-import type { GameState, Purchase } from '../types/game';
-import { NEEDS, WANTS } from '../data/purchases';
+import type { GameState, Purchase, GameEvent } from '../types/game';
+import { NEEDS, WANTS, RANDOM_EVENTS } from '../data/purchases';
 import { LEVELS, ACHIEVEMENTS, generateMonthlyChallenge } from '../types/progression';
 import type { Achievement } from '../types/progression';
 import { trackPurchase, trackSkip, trackSave, finalizeMonthAnalytics } from '../utils/analytics';
 import { generateFinancialReport } from '../utils/reportGenerator';
 import type { FinancialReport } from '../types/analytics';
+import { INVESTMENTS } from '../types/investments';
+import type { PlayerInvestment } from '../types/investments';
 
 const STORAGE_KEY = 'budget-balance-save';
 
@@ -44,6 +46,7 @@ export const useGameLogic = () => {
   const [levelUpNotification, setLevelUpNotification] = useState<string | null>(null);
   const [achievementUnlocked, setAchievementUnlocked] = useState<Achievement | null>(null);
   const [currentReport, setCurrentReport] = useState<FinancialReport | null>(null);
+  const [currentEvent, setCurrentEvent] = useState<typeof RANDOM_EVENTS[number] | null>(null);
 
   // Save to localStorage whenever state changes
   useEffect(() => {
@@ -237,6 +240,132 @@ export const useGameLogic = () => {
     [gameState.balance, gameState.level, gameState.month, gameState.decisions, showNotification, checkAchievements]
   );
 
+  // Random Events
+  const triggerRandomEvent = useCallback(() => {
+    if (Math.random() < 0.4) {
+      const event = RANDOM_EVENTS[Math.floor(Math.random() * RANDOM_EVENTS.length)];
+      if (event.type === 'expense') {
+        setGameState((prev) => ({
+          ...prev,
+          balance: prev.balance - event.amount,
+          events: [...prev.events, {
+            id: `event-${Date.now()}`,
+            type: 'expense',
+            title: event.title,
+            description: event.description,
+            amount: event.amount,
+            impact: event.impact,
+          } as GameEvent],
+        }));
+        setCurrentEvent(event);
+      } else if (event.type === 'income') {
+        setGameState((prev) => ({
+          ...prev,
+          balance: prev.balance + event.amount,
+          events: [...prev.events, {
+            id: `event-${Date.now()}`,
+            type: 'income',
+            title: event.title,
+            description: event.description,
+            amount: event.amount,
+            impact: event.impact,
+          } as GameEvent],
+        }));
+        setCurrentEvent(event);
+      } else if (event.type === 'choice') {
+        setCurrentEvent(event);
+      }
+    }
+  }, []);
+
+  const handleEventChoice = useCallback((choiceIndex: number) => {
+    if (!currentEvent || currentEvent.type !== 'choice' || !currentEvent.choices) return;
+    const choice = currentEvent.choices[choiceIndex];
+    setGameState((prev) => ({
+      ...prev,
+      balance: prev.balance - choice.cost + (choice.impact.balance || 0),
+      savings: prev.savings + (choice.impact.savings || 0),
+      score: prev.score + (choice.impact.score || 0),
+      events: [...prev.events, {
+        id: `event-${Date.now()}`,
+        type: 'choice',
+        title: currentEvent.title,
+        description: currentEvent.description,
+        choices: currentEvent.choices,
+      } as GameEvent],
+    }));
+    showNotification(choice.label);
+    setCurrentEvent(null);
+  }, [currentEvent, showNotification]);
+
+  const dismissEvent = useCallback(() => {
+    setCurrentEvent(null);
+  }, []);
+
+  // Investment functions
+  const invest = useCallback((investmentId: string, amount: number) => {
+    if (gameState.level < 4) {
+      showNotification('Investments unlock at Level 4!');
+      return false;
+    }
+    const investment = INVESTMENTS.find((i) => i.id === investmentId);
+    if (!investment) return false;
+    if (amount < investment.minAmount) {
+      showNotification(`Minimum investment: ₪${investment.minAmount}`);
+      return false;
+    }
+    if (gameState.balance < amount) {
+      showNotification('Not enough money!');
+      return false;
+    }
+    const playerInvestment: PlayerInvestment = {
+      investmentId,
+      amount,
+      monthInvested: gameState.month,
+      totalReturn: 0,
+    };
+    setGameState((prev) => ({
+      ...prev,
+      balance: prev.balance - amount,
+      investments: [...prev.investments, playerInvestment],
+    }));
+    showNotification(`📈 Invested ₪${amount} in ${investment.name}!`);
+    return true;
+  }, [gameState.balance, gameState.level, gameState.month, showNotification]);
+
+  const sellInvestment = useCallback((index: number) => {
+    const playerInv = gameState.investments[index];
+    if (!playerInv) return false;
+    const totalValue = playerInv.amount + playerInv.totalReturn;
+    setGameState((prev) => ({
+      ...prev,
+      balance: prev.balance + totalValue,
+      investments: prev.investments.filter((_: PlayerInvestment, i: number) => i !== index),
+    }));
+    const profit = playerInv.totalReturn;
+    if (profit >= 0) {
+      showNotification(`💰 Sold for ₪${totalValue.toLocaleString()} (+₪${profit.toLocaleString()} profit)!`);
+    } else {
+      showNotification(`📉 Sold for ₪${totalValue.toLocaleString()} (₪${profit.toLocaleString()} loss)`);
+    }
+    return true;
+  }, [gameState.investments, showNotification]);
+
+  const processInvestments = useCallback(() => {
+    if (gameState.investments.length === 0) return;
+    setGameState((prev) => ({
+      ...prev,
+      investments: prev.investments.map((inv: PlayerInvestment) => {
+        const investment = INVESTMENTS.find((i) => i.id === inv.investmentId);
+        if (!investment) return inv;
+        const [minReturn, maxReturn] = investment.monthlyReturnRange;
+        const returnPercent = minReturn + Math.random() * (maxReturn - minReturn);
+        const monthlyReturn = Math.round((inv.amount + inv.totalReturn) * returnPercent / 100);
+        return { ...inv, totalReturn: inv.totalReturn + monthlyReturn };
+      }),
+    }));
+  }, [gameState.investments]);
+
   const endMonth = useCallback(() => {
     const income = gameState.monthlyIncome;
     const expenses = monthExpenses;
@@ -364,6 +493,9 @@ export const useGameLogic = () => {
       },
     ];
 
+    // Process investments
+    processInvestments();
+
     // New month
     const newMonth = gameState.month + 1;
     setGameState((prev) => {
@@ -384,7 +516,12 @@ export const useGameLogic = () => {
     setMonthExpenses(0);
     setMonthSavings(0);
     setBoughtWants(0);
-  }, [gameState, monthExpenses, monthSavings, boughtWants, currentPurchases, showNotification, checkAchievements]);
+
+    // Trigger random event after month transition
+    setTimeout(() => {
+      triggerRandomEvent();
+    }, 500);
+  }, [gameState, monthExpenses, monthSavings, boughtWants, currentPurchases, showNotification, checkAchievements, triggerRandomEvent, processInvestments]);
 
   const resetGame = useCallback(() => {
     setGameState({
@@ -421,12 +558,17 @@ export const useGameLogic = () => {
     nextLevel,
     allAchievements,
     currentReport,
+    currentEvent,
     buyItem,
     skipItem,
     saveToSavings,
     endMonth,
     resetGame,
     closeReport,
+    handleEventChoice,
+    dismissEvent,
+    invest,
+    sellInvestment,
     isGameOver,
     isGameWon,
   };

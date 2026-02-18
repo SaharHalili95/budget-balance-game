@@ -3,6 +3,9 @@ import { useGameLogic } from './hooks/useGameLogic';
 import { translations } from './i18n/translations';
 import type { Language } from './i18n/translations';
 import { FinancialReportModal } from './components/FinancialReport';
+import { MultiplayerMode } from './components/MultiplayerMode';
+import { INVESTMENTS } from './types/investments';
+import type { PlayerInvestment } from './types/investments';
 import './App.css';
 
 function App() {
@@ -10,6 +13,10 @@ function App() {
   const [gameStarted, setGameStarted] = useState(false);
   const [showAchievements, setShowAchievements] = useState(false);
   const [showRestartConfirm, setShowRestartConfirm] = useState(false);
+  const [multiplayerMode, setMultiplayerMode] = useState(false);
+  const [showInvestModal, setShowInvestModal] = useState(false);
+  const [selectedInvestment, setSelectedInvestment] = useState<string | null>(null);
+  const [investAmount, setInvestAmount] = useState('');
 
   const {
     gameState,
@@ -23,12 +30,17 @@ function App() {
     nextLevel,
     allAchievements,
     currentReport,
+    currentEvent,
     buyItem,
     skipItem,
     saveToSavings,
     endMonth,
     resetGame,
     closeReport,
+    handleEventChoice,
+    dismissEvent,
+    invest,
+    sellInvestment,
     isGameOver,
     isGameWon,
   } = useGameLogic();
@@ -41,6 +53,28 @@ function App() {
     setGameStarted(false);
     setShowRestartConfirm(false);
   };
+
+  const handleInvest = () => {
+    if (!selectedInvestment) return;
+    const amount = parseInt(investAmount);
+    if (isNaN(amount) || amount <= 0) return;
+    const success = invest(selectedInvestment, amount);
+    if (success) {
+      setShowInvestModal(false);
+      setSelectedInvestment(null);
+      setInvestAmount('');
+    }
+  };
+
+  // Multiplayer mode
+  if (multiplayerMode) {
+    return (
+      <MultiplayerMode
+        language={language}
+        onBack={() => setMultiplayerMode(false)}
+      />
+    );
+  }
 
   if (!gameStarted) {
     return (
@@ -67,6 +101,9 @@ function App() {
 
           <button className="btn-primary" onClick={() => setGameStarted(true)}>
             {t.startGame}
+          </button>
+          <button className="btn-secondary" onClick={() => setMultiplayerMode(true)}>
+            👥 {t.multiplayer}
           </button>
         </div>
       </div>
@@ -151,6 +188,104 @@ function App() {
           language={language}
           onClose={closeReport}
         />
+      )}
+
+      {/* Random Event Modal */}
+      {currentEvent && (
+        <div className="achievements-overlay" onClick={currentEvent.type === 'choice' ? undefined : dismissEvent}>
+          <div className="event-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="event-modal-icon">
+              {currentEvent.type === 'expense' ? '💸' : currentEvent.type === 'income' ? '🎉' : '🤔'}
+            </div>
+            <h2 className="event-modal-title">
+              {currentEvent.type === 'expense' ? t.eventExpense : currentEvent.type === 'income' ? t.eventIncome : t.eventChoice}
+            </h2>
+            <h3 className="event-modal-subtitle">{currentEvent.title}</h3>
+            <p className="event-modal-desc">{currentEvent.description}</p>
+            {currentEvent.type !== 'choice' && currentEvent.amount && (
+              <p className={`event-modal-amount ${currentEvent.type === 'expense' ? 'red' : 'green'}`}>
+                {currentEvent.type === 'expense' ? '-' : '+'}₪{currentEvent.amount.toLocaleString()}
+              </p>
+            )}
+            {currentEvent.type === 'choice' && currentEvent.choices ? (
+              <div className="event-choices">
+                {currentEvent.choices.map((choice, idx) => (
+                  <button
+                    key={idx}
+                    className={choice.isNeed ? 'btn-secondary' : 'btn-primary'}
+                    onClick={() => handleEventChoice(idx)}
+                  >
+                    {choice.label}
+                    {choice.cost > 0 && <span className="choice-cost"> (₪{choice.cost})</span>}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <button className="btn-primary" onClick={dismissEvent}>
+                {t.dismiss}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Investment Modal */}
+      {showInvestModal && (
+        <div className="achievements-overlay" onClick={() => setShowInvestModal(false)}>
+          <div className="invest-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>📈 {t.investments}</h2>
+              <button className="close-btn" aria-label="Close" onClick={() => setShowInvestModal(false)}>
+                ×
+              </button>
+            </div>
+            <div className="invest-grid">
+              {INVESTMENTS.map((inv) => {
+                const riskColors = { low: '#10b981', medium: '#f59e0b', high: '#ef4444' };
+                const riskLabels = { low: t.low, medium: t.medium, high: t.high };
+                return (
+                  <div
+                    key={inv.id}
+                    className={`invest-option ${selectedInvestment === inv.id ? 'selected' : ''}`}
+                    onClick={() => {
+                      setSelectedInvestment(inv.id);
+                      setInvestAmount(String(inv.minAmount));
+                    }}
+                  >
+                    <div className="invest-option-header">
+                      <h3>{language === 'he' ? inv.nameHe : inv.name}</h3>
+                      <span className="risk-badge" style={{ color: riskColors[inv.riskLevel] }}>
+                        {riskLabels[inv.riskLevel]}
+                      </span>
+                    </div>
+                    <p className="invest-option-desc">
+                      {language === 'he' ? inv.descriptionHe : inv.description}
+                    </p>
+                    <p className="invest-option-range">
+                      {t.returns}: {inv.monthlyReturnRange[0]}% ~ {inv.monthlyReturnRange[1]}%
+                    </p>
+                    <p className="invest-option-min">{t.minInvestment}: ₪{inv.minAmount}</p>
+                  </div>
+                );
+              })}
+            </div>
+            {selectedInvestment && (
+              <div className="invest-form">
+                <label>{t.investAmount}</label>
+                <input
+                  type="number"
+                  value={investAmount}
+                  onChange={(e) => setInvestAmount(e.target.value)}
+                  className="mp-input"
+                  min={INVESTMENTS.find(i => i.id === selectedInvestment)?.minAmount || 500}
+                />
+                <button className="btn-primary" onClick={handleInvest}>
+                  {t.invest}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
       )}
 
       {showRestartConfirm && (
@@ -347,6 +482,54 @@ function App() {
             >
               {t.save} ₪1000
             </button>
+          </div>
+
+          {/* Investments Section */}
+          <div className="card">
+            <h3>📈 {t.investments}</h3>
+            {gameState.level >= 4 ? (
+              <>
+                {gameState.investments.length > 0 ? (
+                  <div className="investments-list">
+                    {gameState.investments.map((inv: PlayerInvestment, idx: number) => {
+                      const investData = INVESTMENTS.find(i => i.id === inv.investmentId);
+                      const totalValue = inv.amount + inv.totalReturn;
+                      const returnPct = inv.amount > 0 ? ((inv.totalReturn / inv.amount) * 100).toFixed(1) : '0';
+                      return (
+                        <div key={idx} className="investment-item">
+                          <div className="investment-info">
+                            <strong>{language === 'he' ? investData?.nameHe : investData?.name}</strong>
+                            <span className="investment-value">₪{totalValue.toLocaleString()}</span>
+                          </div>
+                          <div className="investment-meta">
+                            <span className={inv.totalReturn >= 0 ? 'green' : 'red'}>
+                              {inv.totalReturn >= 0 ? '+' : ''}₪{inv.totalReturn.toLocaleString()} ({returnPct}%)
+                            </span>
+                            <button className="btn-small btn-danger" onClick={() => sellInvestment(idx)}>
+                              {t.sell}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-dim">{t.noInvestments}</p>
+                )}
+                <button
+                  className="btn-primary btn-full"
+                  onClick={() => setShowInvestModal(true)}
+                  style={{ marginTop: '0.5rem' }}
+                >
+                  {t.invest}
+                </button>
+              </>
+            ) : (
+              <div className="investment-locked">
+                <span>🔒</span>
+                <p>{t.investmentLockedDesc}</p>
+              </div>
+            )}
           </div>
 
           <div className="card">
