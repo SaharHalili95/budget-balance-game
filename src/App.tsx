@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { useGameLogic } from './hooks/useGameLogic';
 import { translations } from './i18n/translations';
 import type { Language } from './i18n/translations';
@@ -6,6 +6,7 @@ import { FinancialReportModal } from './components/FinancialReport';
 import { MultiplayerMode } from './components/MultiplayerMode';
 import { INVESTMENTS } from './types/investments';
 import type { PlayerInvestment } from './types/investments';
+import type { SavingsGoal } from './types/game';
 import './App.css';
 
 function App() {
@@ -17,6 +18,9 @@ function App() {
   const [showInvestModal, setShowInvestModal] = useState(false);
   const [selectedInvestment, setSelectedInvestment] = useState<string | null>(null);
   const [investAmount, setInvestAmount] = useState('');
+  const [goalName, setGoalName] = useState('');
+  const [goalTarget, setGoalTarget] = useState('');
+  const [goalIcon, setGoalIcon] = useState('🏠');
 
   const {
     gameState,
@@ -43,6 +47,11 @@ function App() {
     sellInvestment,
     isGameOver,
     isGameWon,
+    showGoalModal,
+    setShowGoalModal,
+    createSavingsGoal,
+    deleteSavingsGoal,
+    goalCelebration,
   } = useGameLogic();
 
   const t = translations[language];
@@ -484,6 +493,52 @@ function App() {
             </button>
           </div>
 
+          {/* Savings Goals */}
+          <div className="card">
+            <h3>🎯 יעדי חיסכון</h3>
+            {(gameState.savingsGoals || []).length > 0 ? (
+              <div className="goals-list">
+                {(gameState.savingsGoals || []).map((goal: SavingsGoal) => {
+                  const goalProgress = Math.min(gameState.savings / goal.targetAmount * 100, 100);
+                  return (
+                    <div key={goal.id} className={`goal-item ${goal.completed ? 'goal-completed' : ''}`}>
+                      <div className="goal-header">
+                        <span className="goal-icon-display">{goal.icon}</span>
+                        <span className="goal-name">{goal.name}</span>
+                        {goal.completed && <span className="goal-check">✅</span>}
+                        {!goal.completed && (
+                          <button className="goal-delete" onClick={() => deleteSavingsGoal(goal.id)}>✕</button>
+                        )}
+                      </div>
+                      <div className="goal-progress-bar">
+                        <div
+                          className="goal-progress-fill"
+                          style={{
+                            width: `${goalProgress}%`,
+                            background: goal.completed ? '#10b981' : '#6366f1',
+                          }}
+                        />
+                      </div>
+                      <p className="goal-progress-text">
+                        ₪{Math.min(gameState.savings, goal.targetAmount).toLocaleString()} / ₪{goal.targetAmount.toLocaleString()}
+                        <span className="goal-pct"> ({Math.round(goalProgress)}%)</span>
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-dim">אין יעדים עדיין. הוסיפו אחד!</p>
+            )}
+            <button
+              className="btn-primary btn-full"
+              onClick={() => setShowGoalModal(true)}
+              style={{ marginTop: '0.5rem' }}
+            >
+              + הוסף יעד
+            </button>
+          </div>
+
           {/* Investments Section */}
           <div className="card">
             <h3>📈 {t.investments}</h3>
@@ -627,6 +682,75 @@ function App() {
           )}
         </main>
       </div>
+      {/* Goal Creation Modal */}
+      {showGoalModal && (
+        <div className="modal-overlay" onClick={() => setShowGoalModal(false)}>
+          <div className="goal-modal" onClick={(e: React.MouseEvent) => e.stopPropagation()}>
+            <h3>🎯 יעד חיסכון חדש</h3>
+            <div className="goal-form">
+              <label>שם היעד</label>
+              <input
+                type="text"
+                value={goalName}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setGoalName(e.target.value)}
+                placeholder="למשל: רכב חדש"
+                className="goal-input"
+              />
+              <label>סכום יעד (₪)</label>
+              <input
+                type="number"
+                value={goalTarget}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setGoalTarget(e.target.value)}
+                placeholder="10000"
+                className="goal-input"
+              />
+              <label>אייקון</label>
+              <div className="goal-icon-selector">
+                {['🏠', '🚗', '🎓', '✈️', '💍', '📱', '🎮', '💻'].map((icon) => (
+                  <button
+                    key={icon}
+                    className={`goal-icon-btn ${goalIcon === icon ? 'active' : ''}`}
+                    onClick={() => setGoalIcon(icon)}
+                  >
+                    {icon}
+                  </button>
+                ))}
+              </div>
+              <div className="goal-form-actions">
+                <button
+                  className="btn-primary btn-full"
+                  disabled={!goalName.trim() || !goalTarget || parseInt(goalTarget) <= 0}
+                  onClick={() => {
+                    createSavingsGoal(goalName.trim(), parseInt(goalTarget), goalIcon);
+                    setGoalName('');
+                    setGoalTarget('');
+                    setGoalIcon('🏠');
+                  }}
+                >
+                  צור יעד
+                </button>
+                <button
+                  className="btn-ghost btn-full"
+                  onClick={() => setShowGoalModal(false)}
+                >
+                  ביטול
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Goal Celebration */}
+      {goalCelebration && (
+        <div className="goal-celebration">
+          <div className="goal-celebration-content">
+            <div className="goal-celebration-emoji">🎉</div>
+            <h3>יעד הושג!</h3>
+            <p>{goalCelebration}</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

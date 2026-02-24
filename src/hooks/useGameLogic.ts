@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
 import { INITIAL_STATE } from '../types/game';
-import type { GameState, Purchase, GameEvent } from '../types/game';
+import type { GameState, Purchase, GameEvent, SavingsGoal } from '../types/game';
 import { NEEDS, WANTS, RANDOM_EVENTS } from '../data/purchases';
 import { LEVELS, ACHIEVEMENTS, generateMonthlyChallenge } from '../types/progression';
 import type { Achievement } from '../types/progression';
@@ -47,6 +47,8 @@ export const useGameLogic = () => {
   const [achievementUnlocked, setAchievementUnlocked] = useState<Achievement | null>(null);
   const [currentReport, setCurrentReport] = useState<FinancialReport | null>(null);
   const [currentEvent, setCurrentEvent] = useState<typeof RANDOM_EVENTS[number] | null>(null);
+  const [showGoalModal, setShowGoalModal] = useState(false);
+  const [goalCelebration, setGoalCelebration] = useState<string | null>(null);
 
   // Save to localStorage whenever state changes
   useEffect(() => {
@@ -546,6 +548,51 @@ export const useGameLogic = () => {
     setCurrentReport(null);
   }, []);
 
+  // Savings Goal functions
+  const createSavingsGoal = useCallback((name: string, targetAmount: number, icon: string) => {
+    const newGoal: SavingsGoal = {
+      id: `goal-${Date.now()}`,
+      name,
+      targetAmount,
+      icon,
+      createdAtMonth: gameState.month,
+      completed: false,
+    };
+    setGameState((prev: GameState) => ({
+      ...prev,
+      savingsGoals: [...(prev.savingsGoals || []), newGoal],
+    }));
+    setShowGoalModal(false);
+    showNotification(`🎯 יעד חדש: ${name}!`);
+  }, [gameState.month, showNotification]);
+
+  const deleteSavingsGoal = useCallback((goalId: string) => {
+    setGameState((prev: GameState) => ({
+      ...prev,
+      savingsGoals: (prev.savingsGoals || []).filter((g: SavingsGoal) => g.id !== goalId),
+    }));
+  }, []);
+
+  // Check goals whenever savings change
+  useEffect(() => {
+    const goals: SavingsGoal[] = gameState.savingsGoals || [];
+    const newlyCompleted = goals.filter(
+      (g: SavingsGoal) => !g.completed && gameState.savings >= g.targetAmount
+    );
+    if (newlyCompleted.length > 0) {
+      setGameState((prev: GameState) => ({
+        ...prev,
+        savingsGoals: (prev.savingsGoals || []).map((g: SavingsGoal) =>
+          !g.completed && prev.savings >= g.targetAmount
+            ? { ...g, completed: true, completedAtMonth: prev.month }
+            : g
+        ),
+      }));
+      setGoalCelebration(`${newlyCompleted[0].icon} ${newlyCompleted[0].name}`);
+      setTimeout(() => setGoalCelebration(null), 4000);
+    }
+  }, [gameState.savings]);
+
   return {
     gameState,
     currentPurchases,
@@ -571,5 +618,10 @@ export const useGameLogic = () => {
     sellInvestment,
     isGameOver,
     isGameWon,
+    showGoalModal,
+    setShowGoalModal,
+    createSavingsGoal,
+    deleteSavingsGoal,
+    goalCelebration,
   };
 };
