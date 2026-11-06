@@ -59,10 +59,7 @@ body {
 .start-screen h1 {
   font-size: 3rem;
   font-weight: 800;
-  background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  color: #a5b4fc;
 }
 
 .subtitle {
